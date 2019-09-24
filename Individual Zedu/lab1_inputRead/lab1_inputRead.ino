@@ -1,11 +1,7 @@
 
-const int digitalOutLED = 8;
-int LEDIntens = 0;
-int totalCiclo = 1000;
-int duty = 0;
-int on = 0;
-int off = 0;
-String readIn;
+const int analogIn = A0;
+int LDRvalue = 0;
+
 
 void setup() {
   Serial.begin(9600);
@@ -13,11 +9,10 @@ void setup() {
 
 void loop () {
 
-  readIn=Serial.readStringUntil('/n');
+  LDRvalue = analogRead(analogIn);
   
-  duty = toInt(readIn);
-  Serial.print("valor lido: ");
-  Serial.println(duty);
+  Serial.print("valor LDR: ");
+  Serial.println(LDRvalue);
   
   delay(100);
   
