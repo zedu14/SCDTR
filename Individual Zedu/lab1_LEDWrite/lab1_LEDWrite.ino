@@ -10,6 +10,7 @@ String readIn ="";
 
 void setup() {
   Serial.begin(9600);
+  pinMode(digitalOutLED, OUTPUT);
 }
 
 void loop () {

@@ -5,6 +5,7 @@ int LDRvalue = 0;
 
 void setup() {
   Serial.begin(9600);
+  pinMode(analogIn, INPUT);
 }
 
 void loop () {
