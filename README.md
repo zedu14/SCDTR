@@ -1,2 +1,0 @@
-# SCDTR
-Course's Project
