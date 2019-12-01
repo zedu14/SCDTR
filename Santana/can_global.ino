@@ -2,7 +2,9 @@
 #include <mcp2515.h> 
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 1
+#define ARDUINO 2
+//numero de arduinos no sistema
+#define N 3
 
 float pinOut = 9;
 float sensorPin = A0; // select the input pin for LDR
@@ -18,8 +20,8 @@ int duty = 0;
 
 String serialIn ="";
 
-float O[3]={};
-float K[3][3]={};
+float O=0.0;
+float K[N]={0.0};
 
 uint32_t mask = 0x00000003;
 uint32_t filt = ARDUINO;
@@ -135,7 +137,6 @@ float request(int ordem, int from, int to){
   my_can_msg msg;
   unsigned long t_init = 0;
   int id = 0;
-  float received_lux = 0.0;
   id = code_id(ordem,from,to);
   //Faz o request
   if( write(id,0) != MCP2515::ERROR_OK)
@@ -150,7 +151,7 @@ float request(int ordem, int from, int to){
   interrupt = false;
   for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
   Serial.print("\tReceiving: "); Serial.println(msg.value);
-  return msg.value/100.0;
+  return msg.value;
 }
 
 void send_data(int ordem, int valor, int from, int to){
@@ -159,71 +160,54 @@ void send_data(int ordem, int valor, int from, int to){
     Serial.println("\t\tError: MCP2515 TX Buffers Full");
 }
 
-void calibrate(){
-  int id=0;
-  float Lux_cal = 0.0;
-  O[2]=bit_to_lux();
-  //lux do nó 1
-  Lux_cal = request(1,3,1);
-  O[0]=Lux_cal;
-  //lux do nó 2
-  Lux_cal = request(1,3,2);
-  O[1]=Lux_cal;
-
-  analogWrite(pinOut, 255);
-  delay(1000);
-  K[2][2]=bit_to_lux()-O[2];
-  Lux_cal = request(1,3,1);
-  K[0][2]=Lux_cal - O[0];
-  Lux_cal = request(1,3,2);
-  K[1][2]=Lux_cal - O[1];
-
-  analogWrite(pinOut, 0);
-
-  delay(1000);
-  //set duty of node 1 to 255
-  send_data(2,255,3,1);
-    
-  delay(1000);
-  K[2][0]=bit_to_lux()-O[2];
-  Lux_cal = request(1,3,1);
-  K[0][0]=Lux_cal - O[0];
-  Lux_cal = request(1,3,2);  
-  K[1][0]=Lux_cal - O[1];
-
-  //set duty of node 1 to 0
-  send_data(2,0,3,1);
-
-  delay(1000);
-  //set duty of node 2 to 255
-  send_data(2,255,3,2);
-    
-  delay(1000);
-  K[2][1]=bit_to_lux()-O[2];
-  Lux_cal = request(1,3,1);
-  K[0][1]=Lux_cal - O[0];
-  Lux_cal = request(1,3,2);  
-  K[1][1]=Lux_cal - O[1];
-
-  //set duty of node 2 to 0
-  send_data(2,0,3,2);
-}
-
 void imprimir_k_o(){
-  int i=0;
   int m=0;
 
-  for(i=0;i<3;i++){
-    Serial.print("O");Serial.print(i);Serial.print(": ");Serial.println(O[i]);
-  }
+  Serial.print("O : ");Serial.println(O);
 
   for(m=0;m<3;m++){
-    for(i=0;i<3;i++){
-      Serial.print("K");Serial.print(m+1);Serial.print(i+1);Serial.print(": ");Serial.println(K[m][i]);
-    }
+    Serial.print("K");Serial.print(ARDUINO-1);Serial.print(m);Serial.print(": ");Serial.println(K[m]);
   }
 }
 
+void calibrate(){
+  int i=0;
+
+  Serial.println("Vai calibrar");
+  delay(1000);
+  Serial.print("O : ");Serial.println(O);
+  O=bit_to_lux();
+  Serial.print("O : ");Serial.println(O);
+  delay(1000);
+  analogWrite(pinOut, 255);
+  delay(1000);
+  K[ARDUINO-1]=bit_to_lux()-O;
+  analogWrite(pinOut, 0);
+  delay(1000);
+  //set duty of node 1 to 255
+  for(i=1;i<N;i++){
+    if(i==ARDUINO)
+      continue;
+    else{
+      for(i=1;i<=N;i++){
+        if(i == ARDUINO)
+          continue;
+        Serial.print("Talking with Arduino : "); Serial.println(i);
+        send_data(2,255,ARDUINO,i);
+        delay(1000);
+        Serial.print("A atualizar constante : "); Serial.println(i-1);
+        Serial.println(bit_to_lux());
+        K[i-1] = bit_to_lux()-O;
+        send_data(2,0,ARDUINO,i);
+        delay(1000); 
+      }
+    }
+  }
+  imprimir_k_o();
+  //caso nao seja o ultimo arduino, notifica o proximo para calibrar
+  if(ARDUINO != N)
+    send_data(0,0,ARDUINO,ARDUINO+1); 
+}
 void hub(){
   serialIn = Serial.readString();
   char command = serialIn.charAt(0);
@@ -242,7 +226,7 @@ void hub(){
           if(flag_self ==1)
             Serial.println(bit_to_lux());
           else
-            Serial.println(request(1,ARDUINO,node));
+            Serial.println(request(1,ARDUINO,node)/100.0);
         break;
         case 'd': //duty
           Serial.println(request(2,ARDUINO,node));
@@ -273,11 +257,9 @@ void setup() {
   
   mcp2515.setNormalMode();
   //mcp2515.setLoopbackMode();
-  if (ARDUINO == 3){
-    Serial.print("Aqui");
+  if (ARDUINO == 1){
     delay(1000);
     calibrate();
-    imprimir_k_o();
   }
 }
 
@@ -306,20 +288,22 @@ void loop() {
       from = decode_id(frame.can_id,2);
       to = decode_id(frame.can_id,3);
       Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
-      
-      if(ordem == 2){
-        duty = msg.value;
-        analogWrite(pinOut,duty);
-      }
+
+      if(ordem == 0)
+        calibrate();
       else if(ordem == 1){
         ativa_envia_lux=1;
+      }
+      else if(ordem == 2){
+        duty = msg.value;
+        analogWrite(pinOut,duty);
       }
     }
     if(ativa_envia_lux==1){
       //inverte de quem vem e para quem vai, para devolver o valor pedido
       send_data(1,bit_to_lux()*100,to, from);
       ativa_envia_lux=0;
-    }   
+    }
+       
   }
-   
 }
