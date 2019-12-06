@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/controlo.cpp
+iostream
+-
+math.h
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/math.h
+controlo.h
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/controlo.h
+
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/controlo.h
+

@@ -3,8 +3,8 @@ const int analogIn = A0;
 float LDRvalue = 0.0;
 float VR = 0.0;
 float R = 0.0;
-float b = 5.0;
-float m = -0.7;
+float b = 4.9;
+float m = -0.84;
 float R1 = 10000.0;
 float L = 0.0;
 float V = 5.0;
@@ -19,7 +19,7 @@ void loop () {
 
   LDRvalue = analogRead(analogIn);
   
-  VR = 5- ( LDRvalue / 255) ;
+  VR = 5- ( LDRvalue / 1023)*5.0 ;
 
   R = (R1*VR) / (V-VR);
   

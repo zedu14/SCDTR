@@ -1,0 +1,11 @@
+//
+// Created by zedu on 05/12/19.
+//
+
+#ifndef CONTROLO_DISTRIBUIDO_NODE_H
+#define CONTROLO_DISTRIBUIDO_NODE_H
+
+
+
+
+#endif //CONTROLO_DISTRIBUIDO_NODE_H

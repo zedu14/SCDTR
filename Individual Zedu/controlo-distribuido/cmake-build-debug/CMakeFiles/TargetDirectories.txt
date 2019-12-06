@@ -1,0 +1,3 @@
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/cmake-build-debug/CMakeFiles/rebuild_cache.dir
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/cmake-build-debug/CMakeFiles/controlo_distribuido.dir
+/home/zedu/Documentos/IST/SCDTR/controlo-distribuido/cmake-build-debug/CMakeFiles/edit_cache.dir
