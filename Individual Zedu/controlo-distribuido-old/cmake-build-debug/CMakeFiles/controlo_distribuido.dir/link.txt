@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/controlo_distribuido.dir/main.cpp.o CMakeFiles/controlo_distribuido.dir/controlo.cpp.o CMakeFiles/controlo_distribuido.dir/node.cpp.o  -o controlo_distribuido 
