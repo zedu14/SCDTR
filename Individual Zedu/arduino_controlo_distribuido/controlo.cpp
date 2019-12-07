@@ -276,7 +276,7 @@ float update_av(int i, float av[], float d[]){
 }
 
 
-float controlo-distribuido(float L, float O, float c, float k[]){
+float controlo-distribuido(float L, float O, float c, float k[], int i){
   int iter=0;
   float av_arduino[N]={0.0};
   float custo=0.0;

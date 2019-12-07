@@ -42,6 +42,6 @@ float cost(node a, float d[], float rho);
 void calc_av(float ds[][],float d_av_aux[],int l);
 void update_lagrange(node a,float rho);
 void print_vector(float d[], int l);
-void update_av(int i, float av_arduino[], float d[]);
+void update_av(int i, float av_arduino[], float d[],int i);
 
 #endif //CONTROLO_DISTRIBUIDO_CONTROLO_H
