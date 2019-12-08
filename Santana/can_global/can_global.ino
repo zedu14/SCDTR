@@ -1,8 +1,9 @@
+#include <Arduino.h>
 #include <SPI.h>
 #include <mcp2515.h> 
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 2
+#define ARDUINO 3
 //numero de arduinos no sistema
 #define N 3
 
@@ -173,15 +174,13 @@ void imprimir_k_o(){
 void calibrate(){
   int i=0;
 
-  Serial.println("Vai calibrar");
+  Serial.println("Calibrating...");
   delay(1000);
-  Serial.print("O : ");Serial.println(O);
   O=bit_to_lux();
-  Serial.print("O : ");Serial.println(O);
   delay(1000);
   analogWrite(pinOut, 255);
   delay(1000);
-  K[ARDUINO-1]=bit_to_lux()-O;
+  K[ARDUINO-1]=(bit_to_lux()-O)/100.0;
   analogWrite(pinOut, 0);
   delay(1000);
   //set duty of node 1 to 255
@@ -192,13 +191,10 @@ void calibrate(){
       for(i=1;i<=N;i++){
         if(i == ARDUINO)
           continue;
-        Serial.print("Talking with Arduino : "); Serial.println(i);
-        send_data(2,255,ARDUINO,i);
+        send_data(30,255,ARDUINO,i);
         delay(1000);
-        Serial.print("A atualizar constante : "); Serial.println(i-1);
-        Serial.println(bit_to_lux());
-        K[i-1] = bit_to_lux()-O;
-        send_data(2,0,ARDUINO,i);
+        K[i-1] = (bit_to_lux()-O)/100;
+        send_data(30,0,ARDUINO,i);
         delay(1000); 
       }
     }
@@ -212,8 +208,19 @@ void hub(){
   serialIn = Serial.readString();
   char command = serialIn.charAt(0);
   char variable = "";
+  String value_ = "";
   int node = 0;
   int flag_self = 0;
+  int len = 0;
+  float value = 0.0;
+
+  node = serialIn.charAt(3)-'0';
+  len = serialIn.length();
+  value_ = serialIn.substring(7,len-1);
+  value = value_.toFloat();
+  if (node == ARDUINO)
+   flag_self = 1;
+   
   switch (command) {
     //get -> função request
     case 'g':
@@ -223,17 +230,48 @@ void hub(){
         flag_self = 1;
       switch (variable){
         case 'l': //luminancia
-          if(flag_self ==1)
+          if(flag_self)
             Serial.println(bit_to_lux());
           else
             Serial.println(request(1,ARDUINO,node)/100.0);
         break;
         case 'd': //duty
+        if(flag_self ==1)
+          Serial.println(duty);
+        else
           Serial.println(request(2,ARDUINO,node));
         break; 
       }
       break;
+    case 'o':
+    break;
+    case 'O':
+    break;
+    case 's':
+      if(flag_self){
+        duty = value;
+        analogWrite(pinOut,duty);
+      }
+      else
+        send_data(30,value,ARDUINO,node);
+    break;
   }
+}
+
+void process_order(int ordem, int value, int from, int to){
+  if(ordem == 0)
+    calibrate();
+  //requests
+  else if(ordem == 1)
+    send_data(1,bit_to_lux()*100,to, from);
+  else if (ordem ==2)
+    send_data(2,duty,to, from);
+  //else if (ordem ==3)
+    //send_data(2,flag_occupied,to, from);
+  else if(ordem == 30){
+    duty = value;
+    analogWrite(pinOut,duty);
+    }
 }
 unsigned long counter = 0;
 
@@ -289,21 +327,7 @@ void loop() {
       to = decode_id(frame.can_id,3);
       Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
 
-      if(ordem == 0)
-        calibrate();
-      else if(ordem == 1){
-        ativa_envia_lux=1;
-      }
-      else if(ordem == 2){
-        duty = msg.value;
-        analogWrite(pinOut,duty);
-      }
-    }
-    if(ativa_envia_lux==1){
-      //inverte de quem vem e para quem vai, para devolver o valor pedido
-      send_data(1,bit_to_lux()*100,to, from);
-      ativa_envia_lux=0;
-    }
-       
+      process_order(ordem, msg.value, from, to);
+    }  
   }
 }
