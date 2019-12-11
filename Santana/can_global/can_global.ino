@@ -16,6 +16,10 @@ float R_LDR = 0.0;
 float Lux = 0.0;
 float b = 4.8;
 float m = -0.73;
+float l_bound_occupied = 0.0;
+float l_bound_empty = 0.0;
+float cost = 0.0;
+int flag_occupied = 0;
 
 int duty = 0;
 
@@ -222,7 +226,7 @@ void hub(){
    flag_self = 1;
    
   switch (command) {
-    //get -> função request
+    //requests
     case 'g':
       variable = serialIn.charAt(2);
       node = serialIn.charAt(5)-'0';
@@ -240,13 +244,56 @@ void hub(){
           Serial.println(duty);
         else
           Serial.println(request(2,ARDUINO,node));
-        break; 
+        break;
+        case 'o': //occupancy
+        if(flag_self ==1)
+          Serial.println(flag_occupied);
+        else
+          Serial.println(request(3,ARDUINO,node));
+        break;  
+        case 'O': //illuminance lower bound occupied
+        if(flag_self ==1)
+          Serial.println(l_bound_occupied);
+        else
+          Serial.println(request(4,ARDUINO,node));
+        break;  
+        case 'U': //illuminance lower bound occupied
+        if(flag_self ==1)
+          Serial.println(l_bound_empty);
+        else
+          Serial.println(request(5,ARDUINO,node));
+        break;  
       }
       break;
+    //set occupancy
     case 'o':
+      if(flag_self)
+        flag_occupied = value;
+      else
+        send_data(20,value,ARDUINO,node);
     break;
+    //set illuminance lower bound for occupied state
     case 'O':
+      if(flag_self)
+        l_bound_occupied = value;
+      else
+        send_data(21,value,ARDUINO,node);
     break;
+    //set illuminance lower bound for empty state
+    case 'U':
+      if(flag_self)
+        l_bound_empty = value;
+      else
+        send_data(22,value,ARDUINO,node);
+    break;
+    //set cost of energy
+    case 'c':
+      if(flag_self)
+        cost = value;
+      else
+        send_data(23,value,ARDUINO,node);
+    break;
+    //funcoes personalizadas
     case 's':
       if(flag_self){
         duty = value;
@@ -266,8 +313,22 @@ void process_order(int ordem, int value, int from, int to){
     send_data(1,bit_to_lux()*100,to, from);
   else if (ordem ==2)
     send_data(2,duty,to, from);
-  //else if (ordem ==3)
-    //send_data(2,flag_occupied,to, from);
+  else if (ordem ==3)
+    send_data(3,flag_occupied,to, from);
+  else if (ordem ==4)
+    send_data(4,l_bound_occupied,to, from);
+  else if (ordem ==5)
+    send_data(5,l_bound_empty,to, from);
+  //sets
+  else if (ordem ==20)
+    flag_occupied = value;
+  else if (ordem ==21)
+    l_bound_occupied = value;
+  else if (ordem ==22)
+    l_bound_empty = value;
+  else if (ordem ==23)
+    cost = value;
+  //funcoes personalizadas
   else if(ordem == 30){
     duty = value;
     analogWrite(pinOut,duty);
