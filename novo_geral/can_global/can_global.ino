@@ -1,19 +1,13 @@
 #include <Arduino.h>
 #include <SPI.h>
-#include <mcp2515.h> 
-#include "math.h"
+#include "coms.h"
+#include "controlo.h"
+
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 1
+#define ARDUINO 3
 //numero de arduinos no sistema
 #define N 3
-#define MaxIter 50
-
-#define ENVIAR_DAV_OUTROS 10
-#define PEDIR_DAV_OUTROS 10
-#define ENVIAR_D_PARA_AV 11
-#define PEDIR_D_PARA_AV 11
-
 
 float pinOut = 9;
 float sensorPin = A0; // select the input pin for LDR
@@ -26,7 +20,7 @@ float b = 4.8;
 float m = -0.73;
 float l_bound_occupied = 20.0;
 float l_bound_empty = 0.0;
-float cost = 1.0;
+float arduino_cost = 1.0;
 float d_ff=0.0;
 int n_calibrados = 0;
 int flag_occupied = 0;
@@ -41,20 +35,7 @@ float K[N]={0.0};
 uint32_t mask = 0x00000003;
 uint32_t filt = ARDUINO;
 
-class node {
-public:
-    int index;
-    float d[N];
-    float d_av[N];
-    float y[N];
-    float k[N];
-    float n; //norma vetor k
-    float m; //n-kii^2
-    float c[N];
-    float o;
-    float L;
-
-};
+/*
 class can_frame_stream {
   static constexpr int buffsize = 10; //space for 10 can_messages - increase if needed 
   can_frame cf_buffer[buffsize];
@@ -77,13 +58,13 @@ public:
     read_index = (++read_index)%buffsize;
     return 1;
   }
-} volatile cf_stream; //the object to use
+} volatile cf_stream; //the object to use*/
 
 MCP2515 mcp2515(10); //SS pin 10
 volatile bool interrupt = false; //notification flag for ISR and loop() 
 volatile bool mcp2515_overflow = false;
 volatile bool arduino_overflow = false;
-
+/*
 void irqHandler() {
   can_frame frame;
   uint8_t irq = mcp2515.getInterrupts(); //read CANINTF
@@ -129,324 +110,6 @@ MCP2515::ERROR read(unsigned long &c) {
     }
   return err; 
 }
-void sub_vector(float a[], float b[], float c[],int l) {
-    int i = 0;
-
-    for (i = 0; i < l; i++)
-        c[i] = a[i]-b[i];
-
-}
-
-void add_vector(float a[], float b[], float c[],int l) {
-    int i = 0;
-
-    for (i = 0; i < l; i++)
-        c[i] = a[i]+b[i];
-
-}
-
-void multiply_c_vector(float a, float b[], float c[],int l) {
-    int i = 0;
-
-    for (i = 0; i < l; i++)
-        c[i] = a*b[i];
-}
-
-void equal_vector(float dest[],float from[],int l){
-    int i=0;
-
-    for(i=0;i<l;i++)
-        dest[i]=from[i];
-}
-
-float multiply_vector_to_float(float a[],float b[],int l){
-    float res=0.0;
-    int i=0;
-    for(i=0;i<l;i++)
-        res+=a[i]*b[i];
-
-    return res;
-}
-
-float norma_2( float a[],int l){
-        int i=0;
-        float n=0.0;
-
-        for(i=0; i<l;i++){
-            n+=a[i]*a[i];
-        }
-        return n;
-}
-
-//passa vetor d e custo por referencia
-float consensus_iterate(float d[], node a, float rho) {
-
-
-    int i = 0;
-    float d_best[N]={0.0};
-    for (i = 0; i < N; i++)
-        d_best[i] = -1.0;
-
-
-    int sol_unconstrained=1;
-    int sol_boundary_linear=1;
-    int sol_boundary_0=1;
-    int sol_boundary_100=1;
-    int sol_linear_0=1;
-    int sol_linear_100=1;
-
-    float cost_best = 1000000.0;
-    float cost_unconstrained=1000000.0;
-    float cost_boundary_linear=1000000.0;
-    float cost_boundary_0=1000000.0;
-    float cost_boundary_100=1000000.0;
-    float cost_linear_0=1000000.0;
-    float cost_linear_100=1000000.0;
-
-
-    float z[N]={0.0};
-
-    float d_u[N]={0.0};
-    float d_bl[N]={0.0};
-    float d_b0[N]={0.0};
-    float d_b1[N]={0.0};
-    float d_l0[N]={0.0};
-    float d_l1[N]={0.0};
-
-    float aux1[N]={0.0};
-    float aux2[N]={0.0};
-
-    multiply_c_vector(rho,a.d_av, aux1,N);
-    sub_vector(aux1,a.y, aux2,N);
-    sub_vector(aux2,a.c,z,N);
-
-
-    multiply_c_vector(1.0/rho,z,d_u,N);
-    sol_unconstrained = check_feasibility(a, d_u);
-    if (sol_unconstrained == 1) {
-        cost_unconstrained = cost_arduino(a, d_u, rho);
-        if (cost_unconstrained < cost_best) {
-            equal_vector(d_best,d_u,N);
-            cost_best = cost_unconstrained;
-        }
-    }
-
-
-    multiply_c_vector((a.o - a.L + 1 / rho * multiply_vector_to_float(z, a.k,N))/ a.n, a.k,aux1,N);
-    multiply_c_vector(1.0 / rho,z,aux2,N);
-    sub_vector(aux2,aux1,d_bl,N);
-
-    sol_boundary_linear = check_feasibility(a, d_bl);
-
-    if (sol_boundary_linear == 1) {
-        cost_boundary_linear = cost_arduino(a, d_bl, rho);
-        if (cost_boundary_linear < cost_best) {
-            equal_vector(d_best,d_bl,N);
-            cost_best = cost_boundary_linear;
-        }
-    }
-
-    multiply_c_vector(1.0/rho,z,d_b0,N);
-    d_b0[a.index] = 0.0;
-
-    sol_boundary_0 = check_feasibility(a, d_b0);
-
-    if (sol_boundary_0 == 1) {
-        cost_boundary_0 = cost_arduino(a, d_b0, rho);
-        if (cost_boundary_0 < cost_best) {
-            equal_vector(d_best,d_b0,N);
-            cost_best = cost_boundary_0;
-        }
-    }
-
-    multiply_c_vector(1.0/rho,z,d_b1,N);
-    d_b1[a.index] = 100.0;
-
-    sol_boundary_100 = check_feasibility(a, d_b1);
-
-    if (sol_boundary_100==1){
-        cost_boundary_100 = cost_arduino(a, d_b1, rho);
-        if (cost_boundary_100 < cost_best){
-            equal_vector(d_best,d_b1,N);
-            cost_best = cost_boundary_100;
-        }
-    }
-
-
-    multiply_c_vector(1.0/rho,z,aux1,N);
-    multiply_c_vector(1.0/a.m*(a.o-a.L),a.k,aux2,N);
-    sub_vector(aux1,aux2,d_l0,N);
-    multiply_c_vector((1.0/rho*1.0/a.m)*(a.k[a.index]*z[a.index]-multiply_vector_to_float(z,a.k,N)),a.k,aux1,N);
-    add_vector(d_l0,aux1,d_l0,N);
-
-    d_l0[a.index] = 0.0;
-
-    sol_linear_0 = check_feasibility(a, d_l0);
-
-    if (sol_linear_0==1) {
-        cost_linear_0 = cost_arduino(a, d_l0, rho);
-        if (cost_linear_0 < cost_best) {
-            equal_vector(d_best,d_l0,N);
-            cost_best = cost_linear_0;
-
-        }
-
-    }
-
-    multiply_c_vector(1.0/rho,z,aux1,N);
-    multiply_c_vector(1.0/a.m*(a.o-a.L+100*a.k[a.index]),a.k,aux2,N);
-    sub_vector(aux1,aux2,d_l1,N);
-    multiply_c_vector((1.0/rho*1.0/a.m)*(a.k[a.index]*z[a.index]-multiply_vector_to_float(z,a.k,N)),a.k,aux1,N);
-    add_vector(d_l1,aux1,d_l1,N);
-
-    d_l1[a.index] = 100.0;
-
-    sol_linear_100 = check_feasibility(a, d_l1);
-
-    if (sol_linear_100==1) {
-        cost_linear_100 = cost_arduino(a, d_l1, rho);
-        if (cost_linear_100 < cost_best) {
-            equal_vector(d_best,d_l1,N);
-            cost_best = cost_linear_100;
-        }
-    }
-    equal_vector(d,d_best,N);
-
-    return cost_best;
-}
-
-int check_feasibility(node a, float d[]){
-    float tol = 0.001;
-
-    if (d[a.index] < 0.0-tol) return 0;
-    if (d[a.index] > 100.0+tol) return 0;
-    if (multiply_vector_to_float(d,a.k,N) < a.L-a.o-tol) return 0;
-
-    return 1;
-
-}
-
-float cost_arduino(node a, float d[], float rho){
-    float aux1[N]={0.0};
-    float norm_aux;
-
-    sub_vector(d,a.d_av,aux1,N);
-    norm_aux=norma_2(aux1,N);
-
-    return  multiply_vector_to_float(a.c,d,N)+multiply_vector_to_float(a.y,aux1,N)+rho/2.0*norm_aux;
-
-}
-
-
-void update_lagrange(node a,float rho){
-  int i=0;
-  float aux1[N]={0.0};
-  
-  sub_vector(a.d,a.d_av,aux1,N);
-  multiply_c_vector(rho,aux1,aux1,N);
-  add_vector(a.y,aux1,a.y,N);
-}
-
-
-
-void update_av(int i, float av[], float d[]){
-  int j=0;
-  int k=0;
-  int from,ordem,to=-1;
-  float dji=0.0;
-  float d_avji=0.0;
-  can_frame frame;
-  my_can_msg msg;
-  
-  for(j=0;j<N;j++){
-   av[j]=0;
-   if(i!=j){
-     //envio tambem o que acho que eles sao porque os outros vao precisar
-     send_data(ENVIAR_D_PARA_AV, d[j], i, j);
-    //pedir o que  que os outros acham que eu sou
-    while(j!=from){
-      cf_stream.get(frame);
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
-      to = decode_id(frame.can_id,3);
-      //le mensagem
-      for(k = 0; k < 4; k++) msg.bytes[k] = frame.data[k]; 
-      if(j!=from && ordem!= ENVIAR_D_PARA_AV)
-        send_data(ordem, msg.value, from,to);
-    }
-    dji = msg.value;
-    av[from]+=dji;
-    
-     
-   }
-   else{
-     //sou eu mesmo,nao tenho que pedir
-     av[i]+=d[i];
-   }
-   
- }
-
-//completar vetor
-
- for(j=0;j<N;j++){
-   if(i!=j){
-     //av vem dos outros
-     while(j!=from){
-      cf_stream.get(frame);
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
-      to = decode_id(frame.can_id,3);
-      //le mensagem
-      for(k = 0; k < 4; k++) msg.bytes[k] = frame.data[k]; 
-      if(j!=from)
-        send_data(ordem, msg.value, from,to);
-    }
-    d_avji = msg.value;
-     av[j]=d_avji;
-   }
-   else{
-     av[i]=av[i]/N;
-     send_data(ENVIAR_DAV_OUTROS, d[j], i, j);
-   }
- }
-}
-
-
-float controlo_distribuido(float L, float O, float c, float k[], int i){
-  int iter=0;
-  float av_arduino[N]={0.0};
-  float custo=0.0;
-  float d[N]={0.0};
-  float rho=0.07;
-  int j=0;
-  node arduino;
-  arduino.index=i;
-  for(j=0;j<N;j++){
-    arduino.d[j]=0.0;
-    arduino.d_av[j]=0.0;
-    arduino.y[j]=0.0;
-    arduino.k[j]=0.0;
-  }
-  
-  equal_vector(arduino.k,k,N); 
-  arduino.n=norma_2(arduino.k, N);
-  arduino.m=arduino.n-arduino.k[i]*arduino.k[i];
-  arduino.c[i]=c;
-  arduino.o=O;
-  arduino.L=L;
-  
-  for(iter=1;iter<MaxIter;iter++){
-    custo=consensus_iterate(d, arduino, rho);
- 
-     //computar media
-    update_av(i, av_arduino,d);
-
-    //atualizar lagrange
-    update_lagrange(arduino,rho);
-  }
-  
-  return av_arduino[i];
-}
 
 int code_id(int order, int from, int to){
   return 16*order + 4*from + to;
@@ -468,7 +131,7 @@ int decode_id(int id, int param){
     obj = id & 3;
   }
   return obj;
-}
+}*/
 
 float bit_to_lux(){
   sensorValue = analogRead(sensorPin); // read the value from the sensor
@@ -478,7 +141,7 @@ float bit_to_lux(){
   Lux=pow(10, (log10(R_LDR)-b)/(m));
   return Lux;
 }
-
+/*
 float request(int ordem, int from, int to){
   can_frame frame;
   my_can_msg msg;
@@ -505,7 +168,7 @@ void send_data(int ordem, int valor, int from, int to){
   int id = code_id(ordem,from,to);
   if( write(id,valor) != MCP2515::ERROR_OK)
     Serial.println("\t\tError: MCP2515 TX Buffers Full");
-}
+}*/
 
 void imprimir_k_o(){
   int m=0;
@@ -631,7 +294,7 @@ void hub(){
     //set cost of energy
     case 'c':
       if(flag_self)
-        cost = value;
+        arduino_cost = value;
       else
         send_data(23,value,ARDUINO,node);
     break;
@@ -648,12 +311,8 @@ void hub(){
 }
 
 void process_order(int ordem, int value, int from, int to){
-  if(ordem == 0){
+  if(ordem == 0)
     calibrate();
-    d_ff=controlo_distribuido(l_bound_occupied, O, cost,K, ARDUINO);
-    Serial.print("duty final : ");
-    Serial.println(d_ff);
-  }
   //requests
   else if(ordem == 1)
     send_data(1,bit_to_lux()*100,to, from);
@@ -673,7 +332,7 @@ void process_order(int ordem, int value, int from, int to){
   else if (ordem ==22)
     l_bound_empty = value;
   else if (ordem ==23)
-    cost = value;
+    arduino_cost = value;
   //funcoes personalizadas
   else if(ordem == 30){
     duty = value;
@@ -705,9 +364,7 @@ void setup() {
   if (ARDUINO == 1){
     delay(1000);
     calibrate();
-    d_ff=controlo_distribuido(l_bound_occupied, O, cost,K, ARDUINO);
-    Serial.print("duty final : ");
-    Serial.println(d_ff);
+    d_ff=controlo-distribuido(l_bound_occupied, O, arduino_cost,K, ARDUINO);
   }
 }
 
