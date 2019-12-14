@@ -52,8 +52,8 @@ float Tamostragem=1/fs;
 float R1=10000.0;
 float t_init=0.0;
 float v_init=0.0;
-float coef_btau[N]={0.0,83500.0,65655.0};
-float coef_atau[N]={0.0,-12000.0,-12141.0};
+float coef_btau[N]={87900.0,83500.0,65655.0};
+float coef_atau[N]={-122000,-12000.0,-12141.0};
 float y_des=0.0;
 float y=0.0;
 
