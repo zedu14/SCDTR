@@ -2,9 +2,10 @@
 #include <SPI.h>
 #include <mcp2515.h> 
 #include "math.h"
+#include "pid.h"
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 1
+#define ARDUINO 3
 //numero de arduinos no sistema
 #define N 3
 #define MaxIter 50
@@ -13,7 +14,7 @@
 #define PEDIR_DAV_OUTROS 11
 #define ENVIAR_D_PARA_AV 12
 #define PEDIR_D_PARA_AV 13
-#define FIM_CALIB 37
+#define NEW_DFF 37
 
 
 float pinOut = 9;
@@ -28,9 +29,10 @@ float m = -0.73;
 float l_bound_occupied = 20.0;
 float l_bound_empty = 0.0;
 float cost = 1.0;
-float d_ff=-1.0;
+float d_ff=0.0;
 int n_calibrate = 0;
 int flag_occupied = 0;
+int flag_atualiza_dff=0;
 
 int duty = 0;
 
@@ -41,6 +43,19 @@ float K[N]={0.0};
 
 uint32_t mask = 0x00000003;
 uint32_t filt = ARDUINO;
+
+pid controller;
+float ganho_p=10.0; 
+float ganho_i=10.0;
+float fs=100.0;
+float Tamostragem=1/fs;
+float R1=10000.0;
+float t_init=0.0;
+float v_init=0.0;
+float coef_btau[N]={0.0,83500.0,65655.0};
+float coef_atau[N]={0.0,-12000.0,-12141.0};
+float y_des=0.0;
+float y=0.0;
 
 class node {
 public:
@@ -473,9 +488,7 @@ void update_lagrange(node a,float rho){
 float controlo_distribuido(float L, float O, float c, float k[], int i){
 
   int iter=0;
-  float av_arduino[N]={0.0};
   float custo=0.0;
-  float d[N]={0.0};
   float rho=0.07;
   int j=0;
   node no_arduino;
@@ -499,12 +512,12 @@ float controlo_distribuido(float L, float O, float c, float k[], int i){
 
     
   for(iter=1;iter<MaxIter;iter++){
-    custo=consensus_iterate(d, no_arduino, rho);
+    custo=consensus_iterate(no_arduino.d, no_arduino, rho);
  Serial.print("Iteracao : ");
  Serial.println(iter);
      //computar media
-    av_arduino[i]=update_self_av(i, d);
-    update_geral_av(i,av_arduino, d);
+    no_arduino.d_av[i]=update_self_av(i, no_arduino.d);
+    update_geral_av(i,no_arduino.d_av, no_arduino.d);
     //atualizar lagrange
     
     update_lagrange(no_arduino,rho);
@@ -513,9 +526,20 @@ float controlo_distribuido(float L, float O, float c, float k[], int i){
 
   Serial.print("dff: ");
   for(j=0;j<N;j++){
-      Serial.println(av_arduino[j]);
+      Serial.println(no_arduino.d_av[j]);
   }
-  return av_arduino[i];
+  return no_arduino.d_av[i];
+}
+
+void atualiza_dff(){
+  
+  if(ARDUINO==N){
+    duty=duty-d_ff;
+    for(int j=1;j<N;j++)
+    send_data(NEW_DFF, 1, ARDUINO, j);
+    d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
+    duty+=d_ff;   
+    }  
 }
 
 int code_id(int order, int from, int to){
@@ -649,31 +673,35 @@ void hub(){
           if(flag_self)
             Serial.println(bit_to_lux());
           else
-            Serial.println(request(1,ARDUINO,node)/100.0);
+            Serial.println("l <"+String(node)+"> "+"<"+String(request(1,ARDUINO,node)/100.0)+">");
+            //Serial.println(request(1,ARDUINO,node)/100.0);
         break;
         case 'd': //duty
         if(flag_self ==1)
           Serial.println(duty);
         else
-          Serial.println(request(2,ARDUINO,node));
+          Serial.println("d <"+String(node)+"> "+"<"+String(request(2,ARDUINO,node))+">");
         break;
         case 'o': //occupancy
         if(flag_self ==1)
           Serial.println(flag_occupied);
         else
-          Serial.println(request(3,ARDUINO,node));
+          Serial.println("o <"+String(node)+"> "+"<"+String(request(3,ARDUINO,node))+">");
+          //Serial.println(request(3,ARDUINO,node));
         break;  
         case 'O': //illuminance lower bound occupied
         if(flag_self ==1)
           Serial.println(l_bound_occupied);
         else
-          Serial.println(request(4,ARDUINO,node));
+          Serial.println("O <"+String(node)+"> "+"<"+String(request(4,ARDUINO,node))+">");
+          //Serial.println(request(4,ARDUINO,node));
         break;  
         case 'U': //illuminance lower bound occupied
         if(flag_self ==1)
           Serial.println(l_bound_empty);
         else
-          Serial.println(request(5,ARDUINO,node));
+          Serial.println("U <"+String(node)+"> "+"<"+String(request(5,ARDUINO,node))+">");
+          //Serial.println(request(5,ARDUINO,node));
         break;  
       }
       break;
@@ -683,6 +711,8 @@ void hub(){
         flag_occupied = value;
       else
         send_data(20,value,ARDUINO,node);
+
+      flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for occupied state
     case 'O':
@@ -690,6 +720,9 @@ void hub(){
         l_bound_occupied = value;
       else
         send_data(21,value,ARDUINO,node);
+      
+      if(flag_occupied==1)
+        flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for empty state
     case 'U':
@@ -697,6 +730,9 @@ void hub(){
         l_bound_empty = value;
       else
         send_data(22,value,ARDUINO,node);
+      
+      if(flag_occupied==0)
+        flag_atualiza_dff=1;
     break;
     //set cost of energy
     case 'c':
@@ -704,6 +740,8 @@ void hub(){
         cost = value;
       else
         send_data(23,value,ARDUINO,node);
+
+      flag_atualiza_dff=1;
     break;
     //funcoes personalizadas
     case 's':
@@ -720,15 +758,10 @@ void hub(){
 void process_order(int ordem, int value, int from, int to){
   if(ordem == 0){
     calibrate();
-    //se for o ultimo arduino, tem que informar os outros que ja acabou a calibracao
-    if(ARDUINO==N){
-      for(int j=1;j<N;j++)
-        send_data(FIM_CALIB, 1, ARDUINO, j);
-        d_ff= controlo_distribuido(l_bound_occupied, O, cost, K, ARDUINO-1);
-        Serial.print("dff: ");
-        Serial.println(d_ff);
-       
-    }  
+
+    if(ARDUINO==N)
+      flag_atualiza_dff=1;
+    //apos a calibracao do ultimo arduino, calcula-se d_ffs
   }
   //requests
   else if(ordem == 1)
@@ -754,10 +787,13 @@ void process_order(int ordem, int value, int from, int to){
   else if(ordem == 30){
     duty = value;
     analogWrite(pinOut,duty);
-    }
-    else if(ordem == FIM_CALIB){
-      d_ff= controlo_distribuido(l_bound_occupied, O, cost, K, ARDUINO-1);
-    }
+  }
+  else if(ordem == NEW_DFF){
+    duty=duty-d_ff;
+    d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
+    duty+=d_ff;
+  }
+    
 }
 unsigned long counter = 0;
 
@@ -785,19 +821,49 @@ void setup() {
     delay(1000);
     calibrate();
   }
+  controller.init(ganho_p, ganho_i,Tamostragem);
+      
+  t_init=micros();
+  v_init=analogRead(sensorPin)*5/1023.0;
 }
 
 
+float simulador(float t){
+  float v_des=0.0;
+  float R_des=0.0;
+  float tau=0.0;
+  float v_final=0.0;
+  
+  tau=coef_atau[ARDUINO-1]*log(d_ff)/log(exp(1))+coef_btau[ARDUINO-1];
+  tau=tau*pow(10,3);
+  R_des=pow(10,(log(Lux)/log(10)*m+b));
+  v_final=5.0*(R1/(R1+R_des));
+  
+  //ydes
+  v_des= v_final-(v_final-v_init)*exp(-(t-t_init)/tau);
+  
+  R_des=(R1*(5.0/v_des-1.0))*1.0;
+  y_des= pow(10, (log(R_des)/log(10)-b)/m);
+  return y_des;
+}
+
 void loop() {
   int ordem,from,to,ativa_envia_lux=0;
+  float t_i_loop=0.0;
   
-  
-  
+  if(flag_occupied == 0)
+    Lux=l_bound_occupied;
+  else
+    Lux=l_bound_empty;
+
   
   if(Serial.available())
     hub();
      
-  
+  if(flag_atualiza_dff==1){
+    atualiza_dff();
+    flag_atualiza_dff=0;
+  }
 
   if(interrupt) {
     interrupt = false; 
@@ -822,4 +888,12 @@ void loop() {
       process_order(ordem, msg.value, from, to);
     }  
   }
+
+  t_i_loop=micros();
+  y_des=simulador(micros());
+  y=bit_to_lux();
+
+  controller.calc(y_des, y, d_ff);
+  if(micros()-t_i_loop <Tamostragem)
+    delayMicroseconds(Tamostragem*pow(10,6)-(micros()-t_i_loop)); 
 }
