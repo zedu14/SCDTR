@@ -752,6 +752,11 @@ void hub(){
       else
         send_data(30,value,ARDUINO,node);
     break;
+    //restart
+    case 'r':
+      //
+      restart();
+      
   }
 }
 
@@ -792,10 +797,39 @@ void process_order(int ordem, int value, int from, int to){
     duty=duty-d_ff;
     d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
     duty+=d_ff;
+  }    
+}
+void restart(){
+  //restaura valores para os default
+  for(int i=1; i<=N; i++){
+    if(i == ARDUINO){
+      l_bound_occupied = 20.0;
+      l_bound_empty = 0.0;
+      cost = 1.0;
+      flag_occupied = 0;
+      duty = 0;
+      analogWrite(pinOut, duty);
+    }
+    else{
+      //flag occupied
+      send_data(20,0,ARDUINO,i);
+      //lower bound occupied
+      send_data(21,20,ARDUINO,i);
+      //lower bound empty
+      send_data(22,0,ARDUINO,i);
+      //cost
+      send_data(23,1,ARDUINO,i);
+      //set duties to 0
+      send_data(30,0,ARDUINO,i);
+    }
   }
-    
+  if(ARDUINO == 1)
+    calibrate();
+  else
+    send_data(0,0,ARDUINO,1);
 }
 unsigned long counter = 0;
+
 
 void setup() {
   Serial.begin(250000);
