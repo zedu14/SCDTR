@@ -5,7 +5,7 @@
 #include "pid.h"
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 1
+#define ARDUINO 2
 //numero de arduinos no sistema
 #define N 3
 #define MaxIter 50
@@ -24,7 +24,7 @@ float V0 = 0.0;
 float I = 0.0; 
 float R_LDR = 0.0;
 float Lux = 0.0;
-float b = 4.8;
+float b = 5;
 float m = -0.73;
 float l_bound_occupied = 20.0;
 float l_bound_empty = 0.0;
@@ -364,123 +364,158 @@ void update_lagrange(node a,float rho){
 }
 
 
-
-
-
- float update_self_av(int i, float d[]){
+float update_self_av(int a, float d[]){
   int j=0;
   int k=0;
   int aux=0;
   int from,ordem,to=-1;
+  int my_turn = 0;
+  int contagem = 0;
+  int done = 0;
   float dji=0.0;
   float av=0.0;
   can_frame frame;
-  my_can_msg msg;
-     
 
-  for(j=0;j<N;j++){
-   if(i!=j){
-    //ver se o j já pediu que lhe envie o que acho que ele é
-    while(ordem != PEDIR_D_PARA_AV || from != j+1){ 
-      while(cf_stream.get(frame)){
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
-      }
+  //comeca o arduino 1
+  if(a == 0)
+    my_turn = 1;
+  while(done != 1){
+    if(my_turn == 0){
+      Serial.println("A OUVIR");
+      while( cf_stream.get(frame) ) {
+        my_can_msg msg;
+        for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+        Serial.print("\tReceiving: "); Serial.println(msg.value);
+        ordem = decode_id(frame.can_id,1);
+        from = decode_id(frame.can_id,2);
+        to = decode_id(frame.can_id,3);
+        Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
+        //enviar duty
+        if(ordem == ENVIAR_D_PARA_AV)
+          send_data(ENVIAR_D_PARA_AV, d[a]*100.0,to,from);
+        else if(ordem == 32)
+          my_turn = 1;
+        else if(ordem == 33)
+          return av;
+      } 
     }
-
-    //se j ja pediu, entao envia
-    send_data(ENVIAR_D_PARA_AV, d[j]*100.0, i+1, j+1);
-    delay(100);
-
-    ordem=-1;
-    from=-1;
-   }
-   else{
-    //entao vamos calcular o meu
-    for (k=0;k<N;k++){
-      if(k!=i){
-        //pedir ao k que envie o seu
-        send_data(PEDIR_D_PARA_AV, 1, i+1, k+1); 
-        delay (100);
-
-        //esperar que k envie o que pedi
-        while(ordem != ENVIAR_D_PARA_AV || from != k+1){ 
-          while(cf_stream.get(frame)){
+    //caso seja a vez, pede aos outros
+    else{
+      Serial.println("MINHA VEZ");
+      for(j=0; j<N;j++){
+        if(j == a)
+          continue;
+        contagem = 0;
+        Serial.println("PEDI AO "+String(j+1));
+        send_data(ENVIAR_D_PARA_AV,0,a+1,j+1);
+        while(contagem != 1){
+          while( cf_stream.get(frame) ) {
+          my_can_msg msg;
+          for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+          Serial.print("\tReceiving: "); Serial.println(msg.value);
           ordem = decode_id(frame.can_id,1);
           from = decode_id(frame.can_id,2);
-        } 
+          to = decode_id(frame.can_id,3);
+          Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
+          dji = msg.value/100.0;
+          av+=dji;
+          contagem +=1; 
+          }
+        }
       }
-      for(aux = 0; aux < 4; aux++) msg.bytes[aux] = frame.data[aux];       
-
-      dji = msg.value/100.0;
-      av+=dji; 
-    }
-    else{
-     av+=d[i];
+      av+=d[a];
+      av=av/N;
+      //passa a vez ao proximo se nao for o ultimo arduino
+      if(a != N-1){
+        Serial.println("PASSEI A VEZ");
+        send_data(32,0,a+1,a+2);
+        my_turn = 0;
+      }
+      else{
+        //aviso para terminar iteração
+        send_data(33,0,3,1);
+        send_data(33,0,3,2);
+        done = 1;
+        return av;
+      }
     }
    }
-   av=av/N;
-   }
-  }
-  return av;
  }
-   
  
- void update_geral_av(int i, float av[], float d[]){
+ void update_geral_av(int a, float av[], float d[]){
   int j=0;
   int k=0;
   int aux=0;
   int from,ordem,to=-1;
+  int my_turn = 0;
+  int contagem = 0;
+  int done = 0;
   float dji=0.0;
   can_frame frame;
   my_can_msg msg;
-     
 
-  for(j=0;j<N;j++){
-   if(i!=j){
-    //ver se o j já pediu que lhe envie a minha media
-    // ENVIAR_DAV_OUTROS 10
-    // PEDIR_DAV_OUTROS 11
-    while(ordem !=  PEDIR_DAV_OUTROS || from != j+1){ 
-      while(cf_stream.get(frame)){
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
+  //comeca o arduino 1
+  if(a == 0)
+    my_turn = 1;
+  while(done != 1){
+  
+    //se nao for o arduino 1, espera ate chegar a sua vez e responde a requests
+    if(my_turn == 0){
+      Serial.println("A OUVIR");
+      while( cf_stream.get(frame) ) {
+        my_can_msg msg;
+        for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+        Serial.print("\tReceiving: "); Serial.println(msg.value);
+        ordem = decode_id(frame.can_id,1);
+        from = decode_id(frame.can_id,2);
+        to = decode_id(frame.can_id,3);
+        Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
+        if(ordem == ENVIAR_DAV_OUTROS)
+          send_data(ENVIAR_DAV_OUTROS, av[a]*100.0,to,from);
+        if(ordem == 32)
+          my_turn = 1;
+        if(ordem == 33)
+          done = 1;
+      } 
+    }
+    //caso seja a vez, pede aos outros
+    else{
+      Serial.println("MINHA VEZ");
+      for(j=0; j<N;j++){
+        if(j == a)
+          continue;
+        contagem = 0;
+        Serial.println("PEDI AO "+String(j+1));
+        send_data(ENVIAR_DAV_OUTROS,0,a+1,j+1);
+        while(contagem != 1){
+          while( cf_stream.get(frame) ) {
+            my_can_msg msg;
+            for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+            Serial.print("\tReceiving: "); Serial.println(msg.value);
+            ordem = decode_id(frame.can_id,1);
+            from = decode_id(frame.can_id,2);
+            to = decode_id(frame.can_id,3);
+            Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
+            dji = msg.value/100.0;
+            av[from-1]=dji;
+            contagem +=1; 
+          }
+        }
+      }
+      //passa a vez ao proximo se nao for o ultimo arduino
+      if(a != N-1){
+        send_data(32,0,a+1,a+2);
+        my_turn = 0;
+      }
+      else{
+        //aviso para terminar iteração
+        send_data(33,0,3,1);
+        send_data(33,0,3,2);
+        done = 1;
       }
     }
-
-    //se j ja pediu, entao envia
-    send_data(ENVIAR_DAV_OUTROS, av[i]*100.0, i+1, j+1);
-    delay(100);
-
-    ordem=-1;
-    from=-1;
-   }
-   else{
-    //agora vamos preencher as outras posicoes com os deles porque o meu ja ta
-    for (k=0;k<N;k++){
-      if(k!=i){
-        //pedir ao k que envie o seu
-        send_data(PEDIR_DAV_OUTROS, 1, i+1, k+1); 
-        delay (100);
-
-        //esperar que k envie o que pedi
-        while(ordem != ENVIAR_DAV_OUTROS || from != k+1){ 
-          while(cf_stream.get(frame)){
-          ordem = decode_id(frame.can_id,1);
-          from = decode_id(frame.can_id,2);
-          } 
-        }      
-
-        for(aux = 0; aux < 4; aux++) msg.bytes[aux] = frame.data[aux];
-        dji= msg.value/100.0; 
-        av[k] = dji;
-      }
-    }
-   }
   }
- }
-
-
+}
 
 
 
@@ -520,6 +555,7 @@ float controlo_distribuido(float L, float O, float c, float k[], int i){
     Serial.println("Media 1 "+String(no_arduino.d_av[i]));
     //Serial.println("Media 2 "+String(no_arduino.d_av[1]));
     //Serial.println("Media 3 "+String(no_arduino.d_av[2]));
+    Serial.println("VOU PARA O GERAL");
     update_geral_av(i,no_arduino.d_av, no_arduino.d);
     //atualizar lagrange
     
@@ -541,7 +577,7 @@ void atualiza_dff(){
   }
   d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
   duty = d_ff;
-  analogWrite(pinOut,duty);
+  analogWrite(pinOut,map(duty,0,100,0,255));
   /*if(ARDUINO==N){
     duty=duty-d_ff;
     for(int j=1;j<N;j++)
@@ -576,7 +612,7 @@ int decode_id(int id, int param){
 float bit_to_lux(){
   sensorValue = analogRead(sensorPin); // read the value from the sensor
   V0 = (5.0000/1023.0)*sensorValue;
-  I=V0/10000;
+  I=V0/10000.0;
   R_LDR=(5.0-V0)/I;
   Lux=pow(10, (log10(R_LDR)-b)/(m));
   return Lux;
@@ -625,6 +661,7 @@ void calibrate(){
 
   Serial.println("Calibrating...");
   delay(1000);
+  Serial.println("A ver O");
   O=bit_to_lux();
   delay(1000);
   analogWrite(pinOut, 255);
@@ -802,15 +839,12 @@ void process_order(int ordem, int value, int from, int to){
     duty = value;
     analogWrite(pinOut,duty);
   }
-  else if(ordem == 31){
+  else if(ordem == 31)
     restart();
-  }
   else if(ordem == NEW_DFF){
-    //duty=duty-d_ff;
     d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
-    //duty+=d_ff;
     duty = d_ff;
-    analogWrite(pinOut, duty);
+    analogWrite(pinOut, map(duty,0,100,0,255));
   }    
 }
 void restart(){
@@ -868,7 +902,7 @@ void setup() {
   mcp2515.setNormalMode();
   //mcp2515.setLoopbackMode();
   if (ARDUINO == 1){
-    delay(10000);
+    delay(5000);
     calibrate();
   }
   //controller.init(ganho_p, ganho_i,Tamostragem);
