@@ -395,7 +395,7 @@ float update_self_av(int a, float d[]){
         Serial.print("  ID: "); Serial.print(frame.can_id);Serial.print(" ");Serial.print(ordem);Serial.print(" ");Serial.print(from);Serial.print(" ");Serial.println(to);
         //enviar duty
         if(ordem == ENVIAR_D_PARA_AV)
-          send_data(ENVIAR_D_PARA_AV, d[a]*100.0,to,from);
+          send_data(ENVIAR_D_PARA_AV, d[from-1]*100.0,to,from);
         else if(ordem == 32)
           my_turn = 1;
         else if(ordem == 33)
@@ -753,41 +753,42 @@ void hub(){
       break;
     //set occupancy
     case 'o':
-      if(flag_self)
+      if(flag_self && flag_occupied != value){
         flag_occupied = value;
+        flag_atualiza_dff=1;
+      }
       else
         send_data(20,value,ARDUINO,node);
 
-      flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for occupied state
     case 'O':
-      if(flag_self)
+      if(flag_self){
         l_bound_occupied = value;
+        if(flag_occupied==1)
+          flag_atualiza_dff=1;
+      }
       else
         send_data(21,value,ARDUINO,node);
-      
-      if(flag_occupied==1)
-        flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for empty state
     case 'U':
-      if(flag_self)
-        l_bound_empty = value;
+      if(flag_self){
+        l_bound_empty = value;       
+        if(flag_occupied==0)
+          flag_atualiza_dff=1;
+      }
       else
         send_data(22,value,ARDUINO,node);
-      
-      if(flag_occupied==0)
-        flag_atualiza_dff=1;
     break;
     //set cost of energy
     case 'c':
-      if(flag_self)
-        cost = value;
+      if(flag_self){
+        cost = value;  
+        flag_atualiza_dff=1;
+      }
       else
         send_data(23,value,ARDUINO,node);
-
-      flag_atualiza_dff=1;
     break;
     //funcoes personalizadas
     case 's':
@@ -857,7 +858,7 @@ void process_order(int ordem, int value, int from, int to){
   else if(ordem == 31)
     restart();
   else if(ordem == NEW_DFF){
-    d_ff= controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
+    d_ff = controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
     duty = d_ff;
     analogWrite(pinOut, map(duty,0,100,0,255));
   }    
