@@ -5,7 +5,7 @@
 #include "pid.h"
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 2
+#define ARDUINO 3
 //numero de arduinos no sistema
 #define N 3
 #define MaxIter 50
@@ -24,8 +24,11 @@ float V0 = 0.0;
 float I = 0.0; 
 float R_LDR = 0.0;
 float Lux = 0.0;
-float b = 5;
-float m = -0.73;
+float lux_desired = 0.0;
+float b_vetor[N]={4.8,5,5};
+float m_vetor[N]={-0.7,-0.73,-0.73};
+float b = b_vetor[ARDUINO-1];
+float m = m_vetor[ARDUINO-1];
 float l_bound_occupied = 20.0;
 float l_bound_empty = 0.0;
 float cost = 1.0;
@@ -575,7 +578,7 @@ void atualiza_dff(){
     if(i != ARDUINO)
         send_data(NEW_DFF,0,ARDUINO,i);
   }
-  d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
+  d_ff= controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
   duty = d_ff;
   analogWrite(pinOut,map(duty,0,100,0,255));
   /*if(ARDUINO==N){
@@ -826,14 +829,26 @@ void process_order(int ordem, int value, int from, int to){
   else if (ordem ==5)
     send_data(5,l_bound_empty,to, from);
   //sets
-  else if (ordem ==20)
-    flag_occupied = value;
-  else if (ordem ==21)
+  else if (ordem ==20){
+    if(flag_occupied != value){
+      flag_occupied = value;
+      flag_atualiza_dff = 1;
+    }
+  }
+  else if (ordem ==21){
     l_bound_occupied = value;
-  else if (ordem ==22)
+    if(flag_occupied)
+      flag_atualiza_dff = 1;
+  }
+  else if (ordem ==22){
     l_bound_empty = value;
-  else if (ordem ==23)
+    if(flag_occupied == 0)
+      flag_atualiza_dff = 1;
+  }
+  else if (ordem ==23){
     cost = value;
+    flag_atualiza_dff = 1;
+  }
   //funcoes personalizadas
   else if(ordem == 30){
     duty = value;
@@ -842,7 +857,7 @@ void process_order(int ordem, int value, int from, int to){
   else if(ordem == 31)
     restart();
   else if(ordem == NEW_DFF){
-    d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
+    d_ff= controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
     duty = d_ff;
     analogWrite(pinOut, map(duty,0,100,0,255));
   }    
@@ -916,15 +931,14 @@ void loop() {
   float t_i_loop=micros();
  
   
-  if(flag_occupied == 0)
-    Lux=l_bound_occupied;
-  else
-    Lux=l_bound_empty;
-
-  
   if(Serial.available())
     hub();
-     
+    
+   if(flag_occupied == 1)
+    lux_desired=l_bound_occupied;
+  else
+    lux_desired=l_bound_empty;  
+      
   if(flag_atualiza_dff==1){
     atualiza_dff();
     flag_atualiza_dff=0;
