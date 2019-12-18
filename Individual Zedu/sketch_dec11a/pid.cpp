@@ -16,7 +16,7 @@ float pid::calc(float ref, float y, int u_feedforward)
 {
     float e = ref - y;
     float p = k1*e;
-    float i = ip + k2*(e);
+    float i = k1*ip + k2*(e);
 
 
 

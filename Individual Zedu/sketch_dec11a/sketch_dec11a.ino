@@ -5,7 +5,7 @@
 #include "pid.h"
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 3
+#define ARDUINO 1
 //numero de arduinos no sistema
 #define N 3
 #define MaxIter 50
@@ -15,6 +15,7 @@
 #define ENVIAR_D_PARA_AV 12
 #define PEDIR_D_PARA_AV 13
 #define NEW_DFF 37
+#define SEND_DUTY_LUX 39
 
 
 float pinOut = 9;
@@ -24,8 +25,11 @@ float V0 = 0.0;
 float I = 0.0; 
 float R_LDR = 0.0;
 float Lux = 0.0;
-float b = 4.8;
-float m = -0.73;
+float lux_desired = 0.0;
+float b_vetor[N]={4.8,5.0,5.0};
+float m_vetor[N]={-0.7,-0.73,-0.73};
+float b = b_vetor[ARDUINO-1];
+float m = m_vetor[ARDUINO-1];
 float l_bound_occupied = 20.0;
 float l_bound_empty = 0.0;
 float cost = 1.0;
@@ -33,6 +37,9 @@ float d_ff=0.0;
 int n_calibrate = 0;
 int flag_occupied = 0;
 int flag_atualiza_dff=0;
+int flag_fim_calib=0;
+int leituras_streaming[N]={1,1,1};
+
 
 int duty = 0;
 
@@ -45,15 +52,15 @@ uint32_t mask = 0x00000003;
 uint32_t filt = ARDUINO;
 
 pid controller;
-float ganho_p=10.0; 
-float ganho_i=10.0;
+float ganho_p=7.5; 
+float ganho_i=0.3;
 float fs=100.0;
 float Tamostragem=1/fs;
 float R1=10000.0;
 float t_init=0.0;
 float v_init=0.0;
 float coef_btau[N]={87900.0,83500.0,65655.0};
-float coef_atau[N]={-122000,-12000.0,-12141.0};
+float coef_atau[N]={-12200.0,-12000.0,-12141.0};
 float y_des=0.0;
 float y=0.0;
 
@@ -364,123 +371,143 @@ void update_lagrange(node a,float rho){
 }
 
 
-
-
-
- float update_self_av(int i, float d[]){
+float update_self_av(int a, float d[]){
   int j=0;
   int k=0;
   int aux=0;
   int from,ordem,to=-1;
+  int my_turn = 0;
+  int contagem = 0;
+  int done = 0;
   float dji=0.0;
   float av=0.0;
   can_frame frame;
-  my_can_msg msg;
-     
 
-  for(j=0;j<N;j++){
-   if(i!=j){
-    //ver se o j já pediu que lhe envie o que acho que ele é
-    while(ordem != PEDIR_D_PARA_AV && from != j+1){ 
-      while(cf_stream.get(frame)){
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
-      }
+  //comeca o arduino 1
+  if(a == 0)
+    my_turn = 1;
+  while(done != 1){
+    if(my_turn == 0){
+      while( cf_stream.get(frame) ) {
+        my_can_msg msg;
+        for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+        ordem = decode_id(frame.can_id,1);
+        from = decode_id(frame.can_id,2);
+        to = decode_id(frame.can_id,3);
+        //enviar duty
+        if(ordem == ENVIAR_D_PARA_AV)
+          send_data(ENVIAR_D_PARA_AV, d[from-1]*100.0,to,from);
+        else if(ordem == 32)
+          my_turn = 1;
+        else if(ordem == 33)
+          return av;
+      } 
     }
-
-    //se j ja pediu, entao envia
-    send_data(ENVIAR_D_PARA_AV, d[j]*100.0, i+1, j+1);
-    delay(100);
-
-    ordem=-1;
-    from=-1;
-   }
-   else{
-    //entao vamos calcular o meu
-    for (k=0;k<N;k++){
-      if(k!=i){
-        //pedir ao k que envie o seu
-        send_data(PEDIR_D_PARA_AV, 1, i+1, k+1); 
-        delay (100);
-
-        //esperar que k envie o que pedi
-        while(ordem != ENVIAR_D_PARA_AV && from != k+1){ 
-          while(cf_stream.get(frame)){
+    //caso seja a vez, pede aos outros
+    else{
+      for(j=0; j<N;j++){
+        if(j == a)
+          continue;
+        contagem = 0;
+        send_data(ENVIAR_D_PARA_AV,0,a+1,j+1);
+        while(contagem != 1){
+          while( cf_stream.get(frame) ) {
+          my_can_msg msg;
+          for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
           ordem = decode_id(frame.can_id,1);
           from = decode_id(frame.can_id,2);
-        } 
+          to = decode_id(frame.can_id,3);
+          dji = msg.value/100.0;
+          av+=dji;
+          contagem +=1; 
+          }
+        }
       }
-      for(aux = 0; aux < 4; aux++) msg.bytes[aux] = frame.data[aux];       
-
-      dji = msg.value/100.0;
-      av+=dji; 
-    }
-    else{
-     av+=d[i];
+      av+=d[a];
+      av=av/N;
+      //passa a vez ao proximo se nao for o ultimo arduino
+      if(a != N-1){
+        send_data(32,0,a+1,a+2);
+        my_turn = 0;
+      }
+      else{
+        //aviso para terminar iteração
+        send_data(33,0,3,1);
+        send_data(33,0,3,2);
+        done = 1;
+        return av;
+      }
     }
    }
-   av=av/N;
-   }
-  }
-  return av;
  }
-   
  
- void update_geral_av(int i, float av[], float d[]){
+ void update_geral_av(int a, float av[], float d[]){
   int j=0;
   int k=0;
   int aux=0;
   int from,ordem,to=-1;
+  int my_turn = 0;
+  int contagem = 0;
+  int done = 0;
   float dji=0.0;
   can_frame frame;
   my_can_msg msg;
-     
 
-  for(j=0;j<N;j++){
-   if(i!=j){
-    //ver se o j já pediu que lhe envie a minha media
-    // ENVIAR_DAV_OUTROS 10
-    // PEDIR_DAV_OUTROS 11
-    while(ordem !=  PEDIR_DAV_OUTROS && from != j+1){ 
-      while(cf_stream.get(frame)){
-      ordem = decode_id(frame.can_id,1);
-      from = decode_id(frame.can_id,2);
+  //comeca o arduino 1
+  if(a == 0)
+    my_turn = 1;
+  while(done != 1){
+  
+    //se nao for o arduino 1, espera ate chegar a sua vez e responde a requests
+    if(my_turn == 0){
+      while( cf_stream.get(frame) ) {
+        my_can_msg msg;
+        for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+        ordem = decode_id(frame.can_id,1);
+        from = decode_id(frame.can_id,2);
+        to = decode_id(frame.can_id,3);
+        if(ordem == ENVIAR_DAV_OUTROS)
+          send_data(ENVIAR_DAV_OUTROS, av[a]*100.0,to,from);
+        if(ordem == 32)
+          my_turn = 1;
+        if(ordem == 33)
+          done = 1;
+      } 
+    }
+    //caso seja a vez, pede aos outros
+    else{
+      for(j=0; j<N;j++){
+        if(j == a)
+          continue;
+        contagem = 0;
+        send_data(ENVIAR_DAV_OUTROS,0,a+1,j+1);
+        while(contagem != 1){
+          while( cf_stream.get(frame) ) {
+            my_can_msg msg;
+            for(int i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+            ordem = decode_id(frame.can_id,1);
+            from = decode_id(frame.can_id,2);
+            to = decode_id(frame.can_id,3);
+            dji = msg.value/100.0;
+            av[from-1]=dji;
+            contagem +=1; 
+          }
+        }
+      }
+      //passa a vez ao proximo se nao for o ultimo arduino
+      if(a != N-1){
+        send_data(32,0,a+1,a+2);
+        my_turn = 0;
+      }
+      else{
+        //aviso para terminar iteração
+        send_data(33,0,3,1);
+        send_data(33,0,3,2);
+        done = 1;
       }
     }
-
-    //se j ja pediu, entao envia
-    send_data(ENVIAR_DAV_OUTROS, av[i]*100.0, i+1, j+1);
-    delay(100);
-
-    ordem=-1;
-    from=-1;
-   }
-   else{
-    //agora vamos preencher as outras posicoes com os deles porque o meu ja ta
-    for (k=0;k<N;k++){
-      if(k!=i){
-        //pedir ao k que envie o seu
-        send_data(PEDIR_DAV_OUTROS, 1, i+1, k+1); 
-        delay (100);
-
-        //esperar que k envie o que pedi
-        while(ordem != ENVIAR_DAV_OUTROS && from != k+1){ 
-          while(cf_stream.get(frame)){
-          ordem = decode_id(frame.can_id,1);
-          from = decode_id(frame.can_id,2);
-          } 
-        }      
-
-        for(aux = 0; aux < 4; aux++) msg.bytes[aux] = frame.data[aux];
-        dji= msg.value/100.0; 
-        av[k] = dji;
-      }
-    }
-   }
   }
- }
-
-
+}
 
 
 
@@ -513,8 +540,8 @@ float controlo_distribuido(float L, float O, float c, float k[], int i){
     
   for(iter=1;iter<MaxIter;iter++){
     custo=consensus_iterate(no_arduino.d, no_arduino, rho);
- Serial.print("Iteracao : ");
- Serial.println(iter);
+    Serial.print("Iteracao : ");
+    Serial.println(iter);
      //computar media
     no_arduino.d_av[i]=update_self_av(i, no_arduino.d);
     update_geral_av(i,no_arduino.d_av, no_arduino.d);
@@ -532,14 +559,13 @@ float controlo_distribuido(float L, float O, float c, float k[], int i){
 }
 
 void atualiza_dff(){
-  
-  if(ARDUINO==N){
-    duty=duty-d_ff;
-    for(int j=1;j<N;j++)
-    send_data(NEW_DFF, 1, ARDUINO, j);
-    d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
-    duty+=d_ff;   
-    }  
+  for(int i=1; i<=N; i++){
+    if(i != ARDUINO)
+        send_data(NEW_DFF,0,ARDUINO,i);
+  }
+  d_ff= controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
+  duty = d_ff;
+  analogWrite(pinOut,map(duty,0,100,0,255));
 }
 
 int code_id(int order, int from, int to){
@@ -567,7 +593,7 @@ int decode_id(int id, int param){
 float bit_to_lux(){
   sensorValue = analogRead(sensorPin); // read the value from the sensor
   V0 = (5.0000/1023.0)*sensorValue;
-  I=V0/10000;
+  I=V0/10000.0;
   R_LDR=(5.0-V0)/I;
   Lux=pow(10, (log10(R_LDR)-b)/(m));
   return Lux;
@@ -616,6 +642,7 @@ void calibrate(){
 
   Serial.println("Calibrating...");
   delay(1000);
+  Serial.println("A ver O");
   O=bit_to_lux();
   delay(1000);
   analogWrite(pinOut, 255);
@@ -654,6 +681,7 @@ void hub(){
   int len = 0;
   float value = 0.0;
 
+
   node = serialIn.charAt(3)-'0';
   len = serialIn.length();
   value_ = serialIn.substring(7,len-1);
@@ -671,80 +699,78 @@ void hub(){
       switch (variable){
         case 'l': //luminancia
           if(flag_self)
-            Serial.println(bit_to_lux());
+            Serial.println("l <"+String(node)+"> "+"<"+String(bit_to_lux())+">");            
           else
             Serial.println("l <"+String(node)+"> "+"<"+String(request(1,ARDUINO,node)/100.0)+">");
-            //Serial.println(request(1,ARDUINO,node)/100.0);
         break;
         case 'd': //duty
-        if(flag_self ==1)
-          Serial.println(duty);
-        else
-          Serial.println("d <"+String(node)+"> "+"<"+String(request(2,ARDUINO,node))+">");
+          if(flag_self ==1)
+            Serial.println("d <"+String(node)+"> "+"<"+String(duty)+">");          
+          else
+            Serial.println("d <"+String(node)+"> "+"<"+String(request(2,ARDUINO,node))+">");
         break;
         case 'o': //occupancy
-        if(flag_self ==1)
-          Serial.println(flag_occupied);
-        else
-          Serial.println("o <"+String(node)+"> "+"<"+String(request(3,ARDUINO,node))+">");
-          //Serial.println(request(3,ARDUINO,node));
+          if(flag_self ==1)
+            Serial.println("o <"+String(node)+"> "+"<"+String(flag_occupied)+">");          
+          else
+            Serial.println("o <"+String(node)+"> "+"<"+String(request(3,ARDUINO,node))+">");          
         break;  
         case 'O': //illuminance lower bound occupied
-        if(flag_self ==1)
-          Serial.println(l_bound_occupied);
-        else
-          Serial.println("O <"+String(node)+"> "+"<"+String(request(4,ARDUINO,node))+">");
-          //Serial.println(request(4,ARDUINO,node));
+          if(flag_self ==1)
+            Serial.println("O <"+String(node)+"> "+"<"+String(l_bound_occupied)+">");
+          else
+            Serial.println("O <"+String(node)+"> "+"<"+String(request(4,ARDUINO,node))+">");         
         break;  
-        case 'U': //illuminance lower bound occupied
-        if(flag_self ==1)
-          Serial.println(l_bound_empty);
-        else
-          Serial.println("U <"+String(node)+"> "+"<"+String(request(5,ARDUINO,node))+">");
-          //Serial.println(request(5,ARDUINO,node));
+        case 'U': //illuminance lower bound empty
+          if(flag_self ==1)
+            Serial.println("U <"+String(node)+"> "+"<"+String(l_bound_empty)+">");
+            //Serial.println(l_bound_empty);
+          else
+            Serial.println("U <"+String(node)+"> "+"<"+String(request(5,ARDUINO,node))+">");
         break;  
       }
       break;
     //set occupancy
     case 'o':
-      if(flag_self)
+      if(flag_self && flag_occupied != value){
         flag_occupied = value;
+        flag_atualiza_dff=1;
+      }
       else
         send_data(20,value,ARDUINO,node);
 
-      flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for occupied state
     case 'O':
-      if(flag_self)
+      if(flag_self){
         l_bound_occupied = value;
+        if(flag_occupied==1)
+          flag_atualiza_dff=1;
+      }
       else
         send_data(21,value,ARDUINO,node);
-      
-      if(flag_occupied==1)
-        flag_atualiza_dff=1;
     break;
     //set illuminance lower bound for empty state
     case 'U':
-      if(flag_self)
-        l_bound_empty = value;
+      if(flag_self){
+        l_bound_empty = value;       
+        if(flag_occupied==0)
+          flag_atualiza_dff=1;
+      }
       else
         send_data(22,value,ARDUINO,node);
-      
-      if(flag_occupied==0)
-        flag_atualiza_dff=1;
     break;
     //set cost of energy
     case 'c':
-      if(flag_self)
-        cost = value;
+      if(flag_self){
+        cost = value;  
+        flag_atualiza_dff=1;
+      }
       else
         send_data(23,value,ARDUINO,node);
-
-      flag_atualiza_dff=1;
     break;
     //funcoes personalizadas
-    case 's':
+    case 'z':
       if(flag_self){
         duty = value;
         analogWrite(pinOut,duty);
@@ -752,20 +778,30 @@ void hub(){
       else
         send_data(30,value,ARDUINO,node);
     break;
+
+    
     //restart
     case 'r':
-      //
+      for(int i=1; i<=N; i++){
+        if(i != ARDUINO)
+          send_data(31,0,ARDUINO,i);
+      }
       restart();
+      break;
       
   }
 }
 
 void process_order(int ordem, int value, int from, int to){
   if(ordem == 0){
+    flag_fim_calib=0;
     calibrate();
 
-    if(ARDUINO==N)
+    if(ARDUINO==N){
       flag_atualiza_dff=1;
+      flag_fim_calib=1;
+    }
+    
     //apos a calibracao do ultimo arduino, calcula-se d_ffs
   }
   //requests
@@ -780,56 +816,153 @@ void process_order(int ordem, int value, int from, int to){
   else if (ordem ==5)
     send_data(5,l_bound_empty,to, from);
   //sets
-  else if (ordem ==20)
-    flag_occupied = value;
-  else if (ordem ==21)
+  else if (ordem ==20){
+    if(flag_occupied != value){
+      flag_occupied = value;
+      flag_atualiza_dff = 1;
+    }
+  }
+  else if (ordem ==21){
     l_bound_occupied = value;
-  else if (ordem ==22)
+    if(flag_occupied)
+      flag_atualiza_dff = 1;
+  }
+  else if (ordem ==22){
     l_bound_empty = value;
-  else if (ordem ==23)
+    if(flag_occupied == 0)
+      flag_atualiza_dff = 1;
+  }
+  else if (ordem ==23){
     cost = value;
+    flag_atualiza_dff = 1;
+  }
   //funcoes personalizadas
   else if(ordem == 30){
     duty = value;
     analogWrite(pinOut,duty);
   }
+  else if(ordem == 31)
+    restart();
   else if(ordem == NEW_DFF){
-    duty=duty-d_ff;
-    d_ff= controlo_distribuido(Lux, O, cost, K, ARDUINO-1);
-    duty+=d_ff;
-  }    
+    flag_fim_calib=1;
+    d_ff = controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
+    duty = d_ff;
+    analogWrite(pinOut, map(duty,0,100,0,255));
+  }
+  else if(ordem==SEND_DUTY_LUX){
+    streaming_read(value, from);
+    leituras_streaming[from-1]=1;
+  }
 }
 void restart(){
   //restaura valores para os default
-  for(int i=1; i<=N; i++){
-    if(i == ARDUINO){
-      l_bound_occupied = 20.0;
-      l_bound_empty = 0.0;
-      cost = 1.0;
-      flag_occupied = 0;
-      duty = 0;
-      analogWrite(pinOut, duty);
-    }
-    else{
-      //flag occupied
-      send_data(20,0,ARDUINO,i);
-      //lower bound occupied
-      send_data(21,20,ARDUINO,i);
-      //lower bound empty
-      send_data(22,0,ARDUINO,i);
-      //cost
-      send_data(23,1,ARDUINO,i);
-      //set duties to 0
-      send_data(30,0,ARDUINO,i);
+  l_bound_occupied = 20.0;
+  l_bound_empty = 0.0;
+  cost = 1.0;
+  flag_occupied = 0;
+  duty = 0;
+  analogWrite(pinOut, duty);
+  delay(100);
+  if(ARDUINO == 1){
+    flag_fim_calib=0;
+    calibrate();
+  }
+}
+
+float simulador(float t){
+  float v_des=0.0;
+  float R_des=0.0;
+  float tau=0.0;
+  float v_final=0.0;
+  
+  tau=coef_atau[ARDUINO-1]*log(d_ff)/log(exp(1))+coef_btau[ARDUINO-1];
+  tau=tau*pow(10,3);
+  R_des=pow(10,(log(lux_desired)/log(10)*m+b));
+  v_final=5.0*(R1/(R1+R_des));
+  
+  //ydes
+  v_des= v_final-(v_final-v_init)*exp(-(t-t_init)/tau);
+  
+  R_des=(R1*(5.0/v_des-1.0))*1.0;
+  y_des= pow(10, (log(R_des)/log(10)-b)/m);
+  return y_des;
+}
+
+void streaming(float y,float duty){
+  int j=0;
+  int i=0;
+  int ordem,from,to=-1;
+
+  for(j=1;j<=N;j++){
+    if(j!=ARDUINO){
+      send_data(SEND_DUTY_LUX,duty*100.0*pow(2,16)+y*100.0,ARDUINO,j);
     }
   }
-  if(ARDUINO == 1)
-    calibrate();
-  else
-    send_data(0,0,ARDUINO,1);
-}
-unsigned long counter = 0;
 
+  while(check_leituras(leituras_streaming)==1){
+    can_frame frame;
+    while( cf_stream.get(frame) ) {
+      my_can_msg msg;
+      for(i = 0; i < 4; i++) msg.bytes[i] = frame.data[i]; 
+      ordem = decode_id(frame.can_id,1);
+      from = decode_id(frame.can_id,2);
+      to = decode_id(frame.can_id,3);
+
+      process_order(ordem, msg.value, from, to);
+      if(flag_atualiza_dff==1 || flag_fim_calib==0)
+        return;
+    }  
+    
+  }
+  streaming_print(ARDUINO,  y, duty);
+     
+}
+
+
+void streaming_print(int i, float y, float duty){
+
+      Serial.print("Arduino:");
+      Serial.print(i);
+      Serial.print(";");
+      Serial.print("Lux:");
+      Serial.print(y);
+      Serial.print(";");
+      Serial.print("PWM:");
+      Serial.print(duty);
+      Serial.print(";");
+    Serial.println(" ");
+  
+}
+
+void streaming_read(int value, int from){
+  float lux_read=0.0;
+  float duty_read=0.0;
+
+  lux_read=value/(pow(2,16)*100.0);
+  duty_read=(value&(2^16-1))/100.0;
+
+  streaming_print(from, lux_read, duty_read);
+  
+}
+
+int check_leituras(int leituras[]){
+  int i=0;
+  for(i=0;i<N;i++){
+    if(i!=ARDUINO-1){
+      if(leituras[i]!=1) 
+        return 1;
+    }
+  }
+
+  //reset
+ for(i=0;i<N;i++){
+  if(i!=ARDUINO-1)
+    leituras[i]=0;
+  }
+  return 0;
+}
+
+unsigned long counter = 0;
 
 void setup() {
   Serial.begin(250000);
@@ -852,7 +985,7 @@ void setup() {
   mcp2515.setNormalMode();
   //mcp2515.setLoopbackMode();
   if (ARDUINO == 1){
-    delay(1000);
+    delay(5000);
     calibrate();
   }
   controller.init(ganho_p, ganho_i,Tamostragem);
@@ -861,43 +994,24 @@ void setup() {
   v_init=analogRead(sensorPin)*5/1023.0;
 }
 
-
-float simulador(float t){
-  float v_des=0.0;
-  float R_des=0.0;
-  float tau=0.0;
-  float v_final=0.0;
-  
-  tau=coef_atau[ARDUINO-1]*log(d_ff)/log(exp(1))+coef_btau[ARDUINO-1];
-  tau=tau*pow(10,3);
-  R_des=pow(10,(log(Lux)/log(10)*m+b));
-  v_final=5.0*(R1/(R1+R_des));
-  
-  //ydes
-  v_des= v_final-(v_final-v_init)*exp(-(t-t_init)/tau);
-  
-  R_des=(R1*(5.0/v_des-1.0))*1.0;
-  y_des= pow(10, (log(R_des)/log(10)-b)/m);
-  return y_des;
-}
-
 void loop() {
   int ordem,from,to,ativa_envia_lux=0;
-  float t_i_loop=0.0;
-  
-  if(flag_occupied == 0)
-    Lux=l_bound_occupied;
-  else
-    Lux=l_bound_empty;
-
+  float t_i_loop=micros();
+ 
   
   if(Serial.available())
     hub();
-     
+    
+   if(flag_occupied == 1)
+    lux_desired=l_bound_occupied;
+  else
+    lux_desired=l_bound_empty;  
+      
   if(flag_atualiza_dff==1){
     atualiza_dff();
     flag_atualiza_dff=0;
   }
+
 
   if(interrupt) {
     interrupt = false; 
@@ -923,11 +1037,17 @@ void loop() {
     }  
   }
 
-  t_i_loop=micros();
-  y_des=simulador(micros());
-  y=bit_to_lux();
+  if(flag_atualiza_dff==0 && flag_fim_calib==1){
+    y_des=simulador(micros());
+    y=bit_to_lux();
+    duty=controller.calc(y_des, y, d_ff);
+    //  streaming(y,duty);
+    
+  }
 
-  controller.calc(y_des, y, d_ff);
-  if(micros()-t_i_loop <Tamostragem)
+
+  
+  if(micros()-t_i_loop <Tamostragem){
     delayMicroseconds(Tamostragem*pow(10,6)-(micros()-t_i_loop)); 
+  }
 }
