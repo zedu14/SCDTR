@@ -5,7 +5,7 @@
 #include "pid.h"
 
 //alterar consoante o arduino a carregar
-#define ARDUINO 1
+#define ARDUINO 3
 //numero de arduinos no sistema
 #define N 3
 #define MaxIter 50
@@ -35,7 +35,7 @@ float l_bound_empty = 0.0;
 float cost = 1.0;
 float d_ff=0.0;
 int n_calibrate = 0;
-int flag_occupied = 0;
+int flag_occupied = 1;
 int flag_atualiza_dff=0;
 int flag_fim_calib=0;
 int leituras_streaming[N]={1,1,1};
@@ -57,8 +57,8 @@ float ganho_i=0.3;
 float fs=100.0;
 float Tamostragem=1/fs;
 float R1=10000.0;
-float t_init=0.0;
-float v_init=0.0;
+float tempo_inicial=0.0;
+float v_inicial=0.0;
 float coef_btau[N]={87900.0,83500.0,65655.0};
 float coef_atau[N]={-12200.0,-12000.0,-12141.0};
 float y_des=0.0;
@@ -565,6 +565,8 @@ void atualiza_dff(){
   }
   d_ff= controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
   duty = d_ff;
+  tempo_inicial=micros();
+  v_inicial=analogRead(sensorPin)*5/1023.0;
   analogWrite(pinOut,map(duty,0,100,0,255));
 }
 
@@ -642,7 +644,6 @@ void calibrate(){
 
   Serial.println("Calibrating...");
   delay(1000);
-  Serial.println("A ver O");
   O=bit_to_lux();
   delay(1000);
   analogWrite(pinOut, 255);
@@ -845,6 +846,8 @@ void process_order(int ordem, int value, int from, int to){
     restart();
   else if(ordem == NEW_DFF){
     flag_fim_calib=1;
+    tempo_inicial=micros();
+    v_inicial=analogRead(sensorPin)*5/1023.0;   
     d_ff = controlo_distribuido(lux_desired, O, cost, K, ARDUINO-1);
     duty = d_ff;
     analogWrite(pinOut, map(duty,0,100,0,255));
@@ -874,17 +877,22 @@ float simulador(float t){
   float R_des=0.0;
   float tau=0.0;
   float v_final=0.0;
-  
-  tau=coef_atau[ARDUINO-1]*log(d_ff)/log(exp(1))+coef_btau[ARDUINO-1];
-  tau=tau*pow(10,3);
+
+  if(lux_desired!=0){
+  tau=coef_atau[ARDUINO-1]*log(d_ff)+coef_btau[ARDUINO-1];
   R_des=pow(10,(log(lux_desired)/log(10)*m+b));
   v_final=5.0*(R1/(R1+R_des));
   
   //ydes
-  v_des= v_final-(v_final-v_init)*exp(-(t-t_init)/tau);
+  v_des= v_final-(v_final-v_inicial)*exp(-(t-tempo_inicial)/tau);
   
   R_des=(R1*(5.0/v_des-1.0))*1.0;
   y_des= pow(10, (log(R_des)/log(10)-b)/m);
+  }
+  else
+  {
+    y_des=0;
+  }
   return y_des;
 }
 
@@ -892,10 +900,12 @@ void streaming(float y,float duty){
   int j=0;
   int i=0;
   int ordem,from,to=-1;
+  float to_send=0.0;
 
   for(j=1;j<=N;j++){
     if(j!=ARDUINO){
-      send_data(SEND_DUTY_LUX,duty*100.0*pow(2,16)+y*100.0,ARDUINO,j);
+      to_send=duty*100.0*65536.0+y*100.0;
+      send_data(SEND_DUTY_LUX,to_send,ARDUINO,j);
     }
   }
 
@@ -938,8 +948,8 @@ void streaming_read(int value, int from){
   float lux_read=0.0;
   float duty_read=0.0;
 
-  lux_read=value/(pow(2,16)*100.0);
-  duty_read=(value&(2^16-1))/100.0;
+  duty_read=((value& 64294901760)/65536.0)/100.0;
+  lux_read=(value & 65535)/100.0;
 
   streaming_print(from, lux_read, duty_read);
   
@@ -990,8 +1000,7 @@ void setup() {
   }
   controller.init(ganho_p, ganho_i,Tamostragem);
       
-  t_init=micros();
-  v_init=analogRead(sensorPin)*5/1023.0;
+
 }
 
 void loop() {
@@ -1041,13 +1050,17 @@ void loop() {
     y_des=simulador(micros());
     y=bit_to_lux();
     duty=controller.calc(y_des, y, d_ff);
-    //  streaming(y,duty);
+     
+    //streaming(y,duty);
+    
+    streaming_print(ARDUINO, y, duty);
     
   }
 
 
   
   if(micros()-t_i_loop <Tamostragem){
-    delayMicroseconds(Tamostragem*pow(10,6)-(micros()-t_i_loop)); 
+    delayMicroseconds(Tamostragem*pow(10,6)-(micros()-t_i_loop));
+    Serial.println("atrasou"); 
   }
 }
