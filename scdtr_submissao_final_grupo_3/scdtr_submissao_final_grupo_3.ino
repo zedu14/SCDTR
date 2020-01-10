@@ -11,9 +11,7 @@
 #define MaxIter 50
 
 #define ENVIAR_DAV_OUTROS 10
-#define PEDIR_DAV_OUTROS 11
-#define ENVIAR_D_PARA_AV 12
-#define PEDIR_D_PARA_AV 13
+#define ENVIAR_D_PARA_AV 11
 #define NEW_DFF 34
 #define SEND_DUTY_LUX 35
 
